@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>Banner Lab 13</title>
+<title>GameRant Banner Lab</title>
 <style>
 @font-face{font-family:Khand;font-style:normal;font-weight:400;font-display:swap;src:url("https://static1.gamerantimages.com/assets/fonts/khand/khand-regular.woff2") format("woff2")}
 @font-face{font-family:Khand;font-style:normal;font-weight:700;font-display:swap;src:url("https://static1.gamerantimages.com/assets/fonts/khand/khand-bold.woff2") format("woff2")}
@@ -120,6 +120,11 @@ textarea{resize:vertical;min-height:85px;line-height:1.5}
 #preview .blw-placement:active{cursor:grabbing}
 #preview .blw-placement.selected-layer{outline:1px dashed var(--orange);outline-offset:-1px}
 #preview .blw-placement.selected-layer:after{content:"";position:absolute;inset:-2px;border:1px solid var(--orange);pointer-events:none}
+#preview.blw-edit-background .blw-placement:not(.selected-layer),#preview.blw-edit-background .blw-placement:not(.selected-layer) *{pointer-events:none!important}
+#preview .blw-placement[data-blw-backdrop="true"] .blw-resize-handle[data-corner="nw"]{top:1px;left:1px}
+#preview .blw-placement[data-blw-backdrop="true"] .blw-resize-handle[data-corner="ne"]{top:1px;right:1px}
+#preview .blw-placement[data-blw-backdrop="true"] .blw-resize-handle[data-corner="sw"]{bottom:1px;left:1px}
+#preview .blw-placement[data-blw-backdrop="true"] .blw-resize-handle[data-corner="se"]{bottom:1px;right:1px}
 #preview .blw-placeholder{display:flex!important}
 #preview .blw-steam a{pointer-events:auto;cursor:grab}
 .transport{padding:15px 19px 19px;background:var(--panel);border-top:1px solid var(--line)}
@@ -203,6 +208,7 @@ hr{border:0;border-top:1px solid var(--line);margin:15px 0}
 .blw-banner *{box-sizing:border-box}
 .blw-banner[data-blw-layout="sidebar"]{max-width:310px;aspect-ratio:1 / 1}
 .blw-banner .blw-placement{position:absolute;transform:translate(-50%,-50%) rotate(var(--blw-rotate,0deg));transform-origin:center;min-width:0;min-height:0}
+.blw-banner .blw-placement[data-blw-backdrop="true"]{left:0;top:0;width:100%;height:100%;transform:none;overflow:hidden}
 .blw-banner .blw-image{display:block;width:100%;height:100%;max-width:none!important;max-height:none!important;pointer-events:none}
 .blw-banner .blw-text{display:flex;width:100%;height:100%;align-items:center;line-height:1.08;min-width:0}
 .blw-banner .blw-text-flow{display:block;width:100%;min-width:0;white-space:pre-wrap;overflow-wrap:break-word;word-break:normal;line-height:inherit}
@@ -316,6 +322,32 @@ function blwSanitizeRichHTML(raw){
   var output=document.createElement('div');cleanChildren(template.content,output,0);
   return output.innerHTML;
 }
+function blwIsPinnedBackground(item){
+  if(!item||item.type!=='image'||item.fit!=='cover')return false;
+  if(item.viewportBackground===true)return true;
+  if(item.viewportBackground===false)return false;
+  return /^(?:Steam artwork|Steam screenshot)$/i.test(String(item.name||'').trim());
+}
+function blwPositionCover(img,parent,item){
+  if(!img||!img.naturalWidth||!img.naturalHeight||!parent.clientWidth||!parent.clientHeight)return;
+  function numeric(value,fallback){return value==null||value===''||!Number.isFinite(Number(value))?fallback:Number(value);}
+  function bounded(value,min,max){return Math.max(min,Math.min(max,value));}
+  var boxW=parent.clientWidth,boxH=parent.clientHeight;
+  var pinned=blwIsPinnedBackground(item);
+  var zoom=bounded(numeric(item.imageZoom,100),100,400)/100;
+  var stretchW=pinned?bounded(numeric(item.w,100),100,500)/100:1;
+  var stretchH=pinned?bounded(numeric(item.h,100),100,500)/100:1;
+  var scale=Math.max(boxW/img.naturalWidth,boxH/img.naturalHeight)*zoom;
+  var drawW=Math.max(boxW,img.naturalWidth*scale*stretchW);
+  var drawH=Math.max(boxH,img.naturalHeight*scale*stretchH);
+  var extraX=Math.max(0,drawW-boxW),extraY=Math.max(0,drawH-boxH);
+  var panX=bounded(numeric(pinned?item.x:item.imagePanX,50),0,100);
+  var panY=bounded(numeric(pinned?item.y:item.imagePanY,50),0,100);
+  img.style.width=drawW+'px';img.style.height=drawH+'px';
+  img.style.left=-extraX*panX/100+'px';
+  img.style.top=-extraY*panY/100+'px';
+  img.style.objectFit='fill';
+}
 function bannerPlayer(root,initialConfig,opts){
   opts=opts||{};
   var config=initialConfig;
@@ -388,18 +420,7 @@ function bannerPlayer(root,initialConfig,opts){
     if(opts.preview){link.removeAttribute('href');link.tabIndex=-1;}
     return shell;
   }
-  function positionCover(img,parent,item){
-    if(!img.naturalWidth||!img.naturalHeight||!parent.clientWidth||!parent.clientHeight)return;
-    var boxW=parent.clientWidth,boxH=parent.clientHeight;
-    var zoom=clamp(num(item.imageZoom,100),100,400)/100;
-    var scale=Math.max(boxW/img.naturalWidth,boxH/img.naturalHeight)*zoom;
-    var drawW=img.naturalWidth*scale,drawH=img.naturalHeight*scale;
-    var extraX=Math.max(0,drawW-boxW),extraY=Math.max(0,drawH-boxH);
-    img.style.width=drawW+'px';img.style.height=drawH+'px';
-    img.style.left=-extraX*clamp(num(item.imagePanX,50),0,100)/100+'px';
-    img.style.top=-extraY*clamp(num(item.imagePanY,50),0,100)/100+'px';
-    img.style.objectFit='fill';
-  }
+  function positionCover(img,parent,item){blwPositionCover(img,parent,item);}
   function buildImage(parent,item,isStep){
     var url=src(item);
     if(!url){if(opts.preview){var placeholder=addClass('div','blw-placeholder',parent);placeholder.textContent='Image';}return;}
@@ -545,6 +566,12 @@ function bannerPlayer(root,initialConfig,opts){
       node.style.height=clamp(num(layer.h,80),1,500)+'%';
       node.style.opacity=clamp(num(layer.opacity,100),0,100)/100;
       node.style.setProperty('--blw-rotate',clamp(num(layer.rotation,0),-360,360)+'deg');
+      if(blwIsPinnedBackground(layer)){
+        node.dataset.blwBackdrop='true';
+        node.style.left='0';node.style.top='0';
+        node.style.width='100%';node.style.height='100%';
+        node.style.transform='none';
+      }
       if(layer.type==='image'){
         if(layer.pulse){
           node.classList.add('blw-layer-pulse');
@@ -885,10 +912,18 @@ function bannerPlayer(root,initialConfig,opts){
       renderSequenceRows();
       return;
     }
+    var pinnedBackground=blwIsPinnedBackground(layer);
     var html=tfield('Name','name',layer.name,'data-lkey')+checkField('Visible','visible',layer.visible!==false,'data-lkey')+
-      '<div class="subheading">Position & size</div><div class="slider-grid">'+sliderField('X','x',layer.x,'data-lkey',-100,200,.5,'%')+sliderField('Y','y',layer.y,'data-lkey',-100,200,.5,'%')+sliderField('Width','w',layer.w,'data-lkey',2,400,.5,'%')+sliderField('Height','h',layer.h,'data-lkey',2,400,.5,'%')+'</div><div class="center-actions"><button type="button" data-act="center-x">Center horizontally</button><button type="button" data-act="center-y">Center vertically</button></div><div class="slider-grid">'+sliderField('Rotation','rotation',layer.rotation,'data-lkey',-180,180,1,'°')+sliderField('Opacity','opacity',layer.opacity,'data-lkey',0,100,1,'%')+'</div>';
+      '<div class="subheading">'+(pinnedBackground?'Background position & size':'Position & size')+'</div><div class="slider-grid">'+
+      sliderField('X','x',layer.x,'data-lkey',pinnedBackground?0:-100,pinnedBackground?100:200,.5,'%')+
+      sliderField('Y','y',layer.y,'data-lkey',pinnedBackground?0:-100,pinnedBackground?100:200,.5,'%')+
+      sliderField(pinnedBackground?'Stretch width':'Width','w',layer.w,'data-lkey',pinnedBackground?100:2,400,.5,'%')+
+      sliderField(pinnedBackground?'Stretch height':'Height','h',layer.h,'data-lkey',pinnedBackground?100:2,400,.5,'%')+
+      '</div><div class="center-actions"><button type="button" data-act="center-x">Center horizontally</button><button type="button" data-act="center-y">Center vertically</button></div><div class="slider-grid">'+
+      (pinnedBackground?'':sliderField('Rotation','rotation',layer.rotation,'data-lkey',-180,180,1,'°'))+
+      sliderField('Opacity','opacity',layer.opacity,'data-lkey',0,100,1,'%')+'</div>';
     if(layer.type==='image'){
-      html+='<div class="subheading">Image</div>'+urlField('Hosted URL','url',layer.url,'data-lkey')+localUpload('Upload preview','data-layer-upload="1"',layer.filename)+selectField('Fit','fit',layer.fit,'data-lkey',[['contain','Contain'],['cover','Cover']])+(layer.fit==='cover'?'<div class="slider-grid">'+sliderField('Image zoom','imageZoom',layer.imageZoom??100,'data-lkey',100,400,1,'%')+sliderField('Pan horizontally','imagePanX',layer.imagePanX??50,'data-lkey',0,100,1,'%')+sliderField('Pan vertically','imagePanY',layer.imagePanY??50,'data-lkey',0,100,1,'%')+'</div>'+checkField('Drag canvas to pan artwork','panMode',layer.panMode===true,'data-lkey'):'')+sliderField('Brightness','brightness',layer.brightness??100,'data-lkey',0,200,1,'%')+tfield('Alt text','alt',layer.alt,'data-lkey');
+      html+='<div class="subheading">Image</div>'+urlField('Hosted URL','url',layer.url,'data-lkey')+localUpload('Upload preview','data-layer-upload="1"',layer.filename)+selectField('Fit','fit',layer.fit,'data-lkey',[['contain','Contain'],['cover','Cover']])+(layer.fit==='cover'?'<div class="slider-grid">'+sliderField('Image zoom','imageZoom',layer.imageZoom??100,'data-lkey',100,400,1,'%')+(pinnedBackground?'':sliderField('Pan horizontally','imagePanX',layer.imagePanX??50,'data-lkey',0,100,1,'%')+sliderField('Pan vertically','imagePanY',layer.imagePanY??50,'data-lkey',0,100,1,'%'))+'</div>'+(pinnedBackground?'':checkField('Drag canvas to pan artwork','panMode',layer.panMode===true,'data-lkey')):'')+sliderField('Brightness','brightness',layer.brightness??100,'data-lkey',0,200,1,'%')+tfield('Alt text','alt',layer.alt,'data-lkey');
       html+='<details '+(layer.pulse||layer.breathe?'open':'')+'><summary class="subheading" style="cursor:pointer">Image motion</summary>'+checkField('Opacity pulse','pulse',layer.pulse,'data-lkey')+(layer.pulse?'<div class="slider-grid">'+sliderField('Min opacity','pulseMin',layer.pulseMin,'data-lkey',0,100,1,'%')+sliderField('Max opacity','pulseMax',layer.pulseMax,'data-lkey',0,100,1,'%')+sliderField('Duration','pulseDuration',layer.pulseDuration,'data-lkey',200,60000,100,' ms')+sliderField('Phase','pulsePhase',layer.pulsePhase,'data-lkey',0,100,1,'%')+'</div>':'')+checkField('Breathing','breathe',layer.breathe,'data-lkey')+(layer.breathe?'<div class="slider-grid">'+sliderField('Amount','breatheAmount',layer.breatheAmount,'data-lkey',0,40,.1,'%')+sliderField('Duration','breatheDuration',layer.breatheDuration,'data-lkey',200,60000,100,' ms')+'</div>':'')+'</details>';
     }else if(layer.type==='text'){
       html+=richTextMarkup(layer,false)+'<details class="typography-details"><summary class="subheading" style="cursor:pointer">Text defaults</summary>'+typographyFields(layer)+'</details>';
@@ -1058,6 +1093,8 @@ function bannerPlayer(root,initialConfig,opts){
     if(el.dataset.lkey){
       var key=el.dataset.lkey;
       layer[key]=value;
+      if(blwIsPinnedBackground(layer)&&key==='x')layer.imagePanX=value;
+      if(blwIsPinnedBackground(layer)&&key==='y')layer.imagePanY=value;
       if(key==='url'&&validURL(value)){delete layer.localPreview;delete layer.filename;}
       updatePreview();
       if(key==='name')renderLayers();
@@ -1250,7 +1287,7 @@ function bannerPlayer(root,initialConfig,opts){
       document.getElementById('image-picker').click();
       return;
     }
-    if(action==='center-x'||action==='center-y'){layer[action==='center-x'?'x':'y']=50;renderSettings();updatePreview();decorateSelection();return;}
+    if(action==='center-x'||action==='center-y'){var axis=action==='center-x'?'x':'y';layer[axis]=50;if(blwIsPinnedBackground(layer))layer[axis==='x'?'imagePanX':'imagePanY']=50;renderSettings();updatePreview();decorateSelection();return;}
     if(action==='delete-layer'){removeLayer(layer.id);return;}
     if(action==='layer-up'){moveLayer(layer.id,1);return;}
     if(action==='layer-down'){moveLayer(layer.id,-1);return;}
@@ -1457,6 +1494,7 @@ function bannerPlayer(root,initialConfig,opts){
   seek.addEventListener('change',function(){delete seek.dataset.dragging;});
   window.addEventListener('pointerup',function(){delete seek.dataset.dragging;});
   function decorateSelection(){
+    preview.classList.toggle('blw-edit-background',blwIsPinnedBackground(getLayer(selectedId)));
     preview.querySelectorAll('.blw-resize-handle').forEach(function(node){node.remove();});
     var node=Array.from(preview.querySelectorAll('.blw-placement')).find(function(el){return el.dataset.blwLayer===selectedId;});
     if(!node)return;
@@ -1472,7 +1510,8 @@ function bannerPlayer(root,initialConfig,opts){
     historyGroup=null;
     var handle=event.target.closest('.blw-resize-handle');
     if(selectedId!==layer.id)selectLayer(layer.id);
-    drag={layer:layer,elem:target,mode:handle?'resize':layer.type==='image'&&layer.fit==='cover'&&layer.panMode===true?'pan':'move',corner:handle&&handle.dataset.corner,initialX:layer.x,initialY:layer.y,initialW:layer.w,initialH:layer.h,initialPanX:num(layer.imagePanX,50),initialPanY:num(layer.imagePanY,50),initialRotation:layer.rotation,startX:event.clientX,startY:event.clientY};
+    var pinned=blwIsPinnedBackground(layer);
+    drag={layer:layer,elem:target,pinned:pinned,mode:handle?'resize':pinned||layer.type==='image'&&layer.fit==='cover'&&layer.panMode===true?'pan':'move',corner:handle&&handle.dataset.corner,initialX:layer.x,initialY:layer.y,initialW:layer.w,initialH:layer.h,initialPanX:pinned?num(layer.x,50):num(layer.imagePanX,50),initialPanY:pinned?num(layer.y,50):num(layer.imagePanY,50),initialRotation:layer.rotation,startX:event.clientX,startY:event.clientY};
     preview.setPointerCapture(event.pointerId);
   });
   preview.addEventListener('pointermove',function(event){
@@ -1484,19 +1523,26 @@ function bannerPlayer(root,initialConfig,opts){
       var image=drag.elem.querySelector('.blw-image');
       if(!image||!image.naturalWidth||!image.naturalHeight)return;
       var boxW=drag.elem.clientWidth,boxH=drag.elem.clientHeight;
-      var zoom=clamp(num(drag.layer.imageZoom,100),100,400)/100;
-      var scale=Math.max(boxW/image.naturalWidth,boxH/image.naturalHeight)*zoom;
-      var extraX=Math.max(0,image.naturalWidth*scale-boxW),extraY=Math.max(0,image.naturalHeight*scale-boxH);
-      drag.layer.imagePanX=extraX>0?Math.round(clamp(drag.initialPanX-dx/extraX*100,0,100)):50;
-      drag.layer.imagePanY=extraY>0?Math.round(clamp(drag.initialPanY-dy/extraY*100,0,100)):50;
-      image.style.left=-extraX*drag.layer.imagePanX/100+'px';
-      image.style.top=-extraY*drag.layer.imagePanY/100+'px';
-      ['imagePanX','imagePanY'].forEach(function(key){var input=editor.querySelector('input[data-lkey="'+key+'"]');if(input){input.value=drag.layer[key];var value=input.closest('.slider-field').querySelector('.slider-value');if(value)value.textContent=drag.layer[key]+'%';}});
+      var extraX=Math.max(0,(parseFloat(image.style.width)||image.clientWidth)-boxW);
+      var extraY=Math.max(0,(parseFloat(image.style.height)||image.clientHeight)-boxH);
+      var panX=extraX>0?Math.round(clamp(drag.initialPanX-dx/extraX*100,0,100)*10)/10:50;
+      var panY=extraY>0?Math.round(clamp(drag.initialPanY-dy/extraY*100,0,100)*10)/10:50;
+      drag.layer.imagePanX=panX;drag.layer.imagePanY=panY;
+      if(drag.pinned){drag.layer.x=panX;drag.layer.y=panY;}
+      blwPositionCover(image,drag.elem,drag.layer);
+      (drag.pinned?['x','y']:['imagePanX','imagePanY']).forEach(function(key){var input=editor.querySelector('input[data-lkey="'+key+'"]');if(input){input.value=drag.layer[key];var value=input.closest('.slider-field').querySelector('.slider-value');if(value)value.textContent=drag.layer[key]+'%';}});
       return;
     }
     if(drag.mode==='move'){
       drag.layer.x=Math.round(clamp(drag.initialX+100*dx/rect.width,-200,300)*10)/10;
       drag.layer.y=Math.round(clamp(drag.initialY+100*dy/rect.height,-200,300)*10)/10;
+    }else if(drag.pinned){
+      var directionX=drag.corner.includes('e')?1:-1;
+      var directionY=drag.corner.includes('s')?1:-1;
+      drag.layer.w=Math.round(clamp(drag.initialW+100*directionX*dx/rect.width,100,400)*10)/10;
+      drag.layer.h=Math.round(clamp(drag.initialH+100*directionY*dy/rect.height,100,400)*10)/10;
+      var backdropImage=drag.elem.querySelector('.blw-image');
+      if(backdropImage)blwPositionCover(backdropImage,drag.elem,drag.layer);
     }else{
       var theta=(Number(drag.initialRotation)||0)*Math.PI/180;
       var cos=Math.cos(theta),sin=Math.sin(theta);
@@ -1512,7 +1558,7 @@ function bannerPlayer(root,initialConfig,opts){
       drag.layer.x=Math.round(clamp(drag.initialX+centerX/rect.width*100,-200,300)*10)/10;
       drag.layer.y=Math.round(clamp(drag.initialY+centerY/rect.height*100,-200,300)*10)/10;
     }
-    if(drag.elem.isConnected){drag.elem.style.left=drag.layer.x+'%';drag.elem.style.top=drag.layer.y+'%';drag.elem.style.width=drag.layer.w+'%';drag.elem.style.height=drag.layer.h+'%';}
+    if(drag.elem.isConnected&&!drag.pinned){drag.elem.style.left=drag.layer.x+'%';drag.elem.style.top=drag.layer.y+'%';drag.elem.style.width=drag.layer.w+'%';drag.elem.style.height=drag.layer.h+'%';}
     ['x','y','w','h'].forEach(function(key){var field=editor.querySelector('input[data-lkey="'+key+'"]');if(field)field.value=drag.layer[key];var readout=field&&field.closest('.slider-field').querySelector('.slider-value');if(readout)readout.textContent=drag.layer[key]+'%';});
   });
   function finishDrag(){if(!drag)return;drag=null;updatePreview();}
@@ -1584,7 +1630,7 @@ function bannerPlayer(root,initialConfig,opts){
     var cfg=cleanConfig(project);
     var encoded=encodeURIComponent(JSON.stringify(cfg)).replace(/'/g,'%27');
     var style=document.getElementById('banner-runtime-css').textContent;
-    var source='(function(){'+blwSanitizeRichHTML.toString()+';var start='+bannerPlayer.toString()+';function boot(){document.querySelectorAll(".blw-banner[data-bl-config]").forEach(function(root){if(root.dataset.blwReady==="1")return;try{var cfg=JSON.parse(decodeURIComponent(root.getAttribute("data-bl-config")));root.dataset.blwReady="1";start(root,cfg,{preview:false});}catch(error){root.removeAttribute("data-blw-ready");}});}boot();if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot,{once:true});})();';
+    var source='(function(){'+blwSanitizeRichHTML.toString()+';'+blwIsPinnedBackground.toString()+';'+blwPositionCover.toString()+';var start='+bannerPlayer.toString()+';function boot(){document.querySelectorAll(".blw-banner[data-bl-config]").forEach(function(root){if(root.dataset.blwReady==="1")return;try{var cfg=JSON.parse(decodeURIComponent(root.getAttribute("data-bl-config")));root.dataset.blwReady="1";start(root,cfg,{preview:false});}catch(error){root.removeAttribute("data-blw-ready");}});}boot();if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot,{once:true});})();';
     return '<style data-blw-style="banner">\n'+style+'\n</style>\n<div class="blw-embed" data-blw-layout="'+(cfg.layout==='sidebar'?'sidebar':'article')+'"><div class="blw-banner" data-bl-config="'+encoded+'" aria-label="'+esc(cfg.name||'Animated banner')+'"></div></div>\n<script>\n'+source+'\n<\/script>';
   }
   function standaloneMarkup(){
@@ -1908,7 +1954,7 @@ function bannerPlayer(root,initialConfig,opts){
     var next={version:6,name:String(game.name||'Steam game').slice(0,120),layout:project.layout,background:'#202020',backgroundMode:'auto',linkUrl:url,newTab:true,layers:[]};
     if(screenshotURL){
       var background=newLayer('image');
-      background.name=screenshot&&screenshot.kind==='banner'?'Steam artwork':'Steam screenshot';background.x=50;background.y=50;background.w=100;background.h=100;background.fit='cover';background.imageZoom=100;background.imagePanX=50;background.imagePanY=50;background.panMode=true;background.brightness=58;
+      background.name=screenshot&&screenshot.kind==='banner'?'Steam artwork':'Steam screenshot';background.viewportBackground=true;background.x=50;background.y=50;background.w=100;background.h=100;background.fit='cover';background.imageZoom=100;background.imagePanX=50;background.imagePanY=50;background.panMode=true;background.brightness=58;
       background.url=screenshotURL;background.alt=String(game.name||'Game')+' artwork';
       next.layers.push(background);
     }
