@@ -172,6 +172,11 @@ hr{border:0;border-top:1px solid var(--line);margin:15px 0}
 .template-content .field:first-child{margin-top:0}
 .template-status{margin:10px 0;color:var(--muted);font-size:12px;min-height:16px}
 .template-status.error{color:#ff8a8a}
+.template-logo-result{display:flex;align-items:center;gap:13px;padding:10px;margin:-2px 0 12px;background:#191919;border:1px solid var(--line);border-radius:8px;min-height:76px}
+.template-logo-result[hidden]{display:none}
+.template-logo-result img{display:block;width:155px;height:74px;max-width:48%;object-fit:contain;flex:0 0 155px;background:repeating-conic-gradient(#333 0% 25%,#252525 0% 50%) 50%/16px 16px;border-radius:4px}
+.template-logo-result .template-logo-description{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+@media(max-width:560px){.template-logo-result img{width:110px;height:62px;flex-basis:110px}}
 .template-game{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:10px 0 4px}
 .template-game strong{font:700 20px/1.2 Khand,Roboto,sans-serif}
 .template-game span{font-size:12px;color:var(--muted)}
@@ -276,10 +281,10 @@ hr{border:0;border-top:1px solid var(--line);margin:15px 0}
 <dialog id="steam-template-dialog" class="steam-template-dialog" aria-labelledby="steam-template-title">
 <div class="template-header"><h2 id="steam-template-title">Steam template</h2><button type="button" id="steam-template-close" aria-label="Close">×</button></div>
 <form id="steam-template-form" autocomplete="off"><div class="template-content">
-<div class="field"><label for="template-steam-url">Steam game URL</label><input id="template-steam-url" type="url" required placeholder="https://store.steampowered.com/app/..."></div>
-<div class="field"><label for="template-logo-url">Transparent logo PNG URL (optional)</label><input id="template-logo-url" type="url" placeholder="https://..."></div>
+<div class="field"><label for="template-steam-url">Steam game URL or App ID</label><input id="template-steam-url" type="text" required placeholder="https://store.steampowered.com/app/... or 2767030" spellcheck="false" autocomplete="off"></div>
+
 <button id="template-fetch" type="submit">Fetch game</button>
-<div id="template-status" class="template-status" role="status" aria-live="polite"></div>
+<div id="template-status" class="template-status" role="status" aria-live="polite"></div><div class="template-logo-result" id="template-logo-result" hidden><img id="template-logo-preview" alt="Game logo preview"><div id="template-logo-description" class="template-logo-description"></div></div>
 <section id="template-details" hidden><div class="template-game"><strong id="template-game-title"></strong><span id="template-game-release"></span></div>
 <div class="field"><label>Background artwork</label><div id="template-screenshots" class="template-screenshots" role="group" aria-label="Choose background artwork"></div></div>
 <div class="field"><label for="template-bullets">Feature headlines · one per line</label><textarea id="template-bullets" rows="6"></textarea></div>
@@ -1754,22 +1759,145 @@ function bannerPlayer(root,initialConfig,opts){
   var templateImages=[];
   var templateScreenshot=0;
   var templateRequest=0;
+  var templateAutoLogo='';
+  var steamLogoCache=new Map();
   var templateForm=document.getElementById('steam-template-form');
   var templateStatus=document.getElementById('template-status');
   var templateDetails=document.getElementById('template-details');
   var templateFetch=document.getElementById('template-fetch');
   var templateCreate=document.getElementById('template-create');
-  function steamAppId(url){
+  function steamAppId(value){
+    var input=String(value||'').trim();
+    if(/^[1-9]\d{0,9}$/.test(input))return input;
     try{
-      var u=new URL(String(url).trim());
+      var u=new URL(input);
       if(u.protocol!=='https:'||!/(^|\.)steampowered\.com$/i.test(u.hostname))return null;
-      var m=u.pathname.match(/^\/(?:app|widget)\/(\d{1,10})(?:\/|$)/);
+      var m=u.pathname.match(/^\/(?:app|widget)\/([1-9]\d{0,9})(?:\/|$)/);
       return m?m[1]:null;
     }catch(e){return null;}
   }
   function templateMessage(message,error){templateStatus.textContent=message;templateStatus.classList.toggle('error',!!error);}
   function validSteamImage(url){
     return validURL(url)&&/^https:\/\//i.test(String(url));
+  }
+  function displayTemplateLogo(url,description){
+    var result=document.getElementById('template-logo-result');
+    var preview=document.getElementById('template-logo-preview');
+    if(!validSteamImage(url)){
+      result.hidden=true;
+      preview.removeAttribute('src');
+      document.getElementById('template-logo-description').textContent='';
+      return;
+    }
+    result.hidden=false;
+    preview.src=url;
+    document.getElementById('template-logo-description').textContent=description||'Custom image';
+  }
+  function verifySteamLogoImage(url){
+    return new Promise(function(resolve){
+      if(!validSteamImage(url)){resolve(null);return;}
+      var image=new Image();
+      var finished=false;
+      var timeout=setTimeout(function(){finish(null);},8000);
+      function finish(result){
+        if(finished)return;
+        finished=true;
+        clearTimeout(timeout);
+        image.onload=null;
+        image.onerror=null;
+        resolve(result);
+      }
+      image.onload=function(){
+        if(image.naturalWidth>0&&image.naturalHeight>0)finish({url:url,w:image.naturalWidth,h:image.naturalHeight});
+        else finish(null);
+      };
+      image.onerror=function(){finish(null);};
+      image.src=url;
+    });
+  }
+  function steamLogoCandidates(appId,record){
+    var root='https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/'+appId+'/';
+    var results=[];
+    var seen=new Set();
+    function add(path,lang,sourceRank){
+      if(typeof path!=='string')return;
+      var clean=path.trim().replace(/^\/+/, '');
+      if(!/^(?:[a-f0-9]{20,64}\/)?logo(?:_[a-z0-9-]+)*\.(?:png|jpe?g|webp|avif)$/i.test(clean))return;
+      if(/logo_(?:schinese|tchinese|japanese|koreana|russian|thai|arabic|french|german|spanish|brazilian|latam|turkish|polish|italian)(?:_|\.)/i.test(clean))return;
+      var url=root+clean;
+      if(seen.has(url))return;
+      seen.add(url);
+      results.push({url:url,lang:lang,sourceRank:sourceRank});
+    }
+    function addVariants(value,sourceRank){
+      if(typeof value==='string'){add(value,'neutral',sourceRank);return;}
+      if(!value||typeof value!=='object'||Array.isArray(value))return;
+      Object.keys(value).forEach(function(key){
+        if(/^(?:english|en|en-us|en_us)$/i.test(key))add(value[key],'english',sourceRank);
+      });
+      Object.keys(value).forEach(function(key){
+        if(/^(?:default|neutral|none|all)$/i.test(key))add(value[key],'neutral',sourceRank+2);
+      });
+    }
+    var common=record&&record.common||{};
+    var assets=common.library_assets_full||common.library_assets||{};
+    var logo=assets.library_logo||{};
+    if(typeof logo==='object'){
+      addVariants(logo.image2x,0);
+      addVariants(logo.image,1);
+    }
+    add('logo_2x.png','english',3);
+    add('logo.png','english',4);
+    return results;
+  }
+  async function fetchSteamLogoRecord(appId){
+    var endpoint='https://api.steamcmd.net/v1/info/'+appId;
+    var controllers=[];
+    async function attempt(url){
+      var controller=new AbortController();
+      controllers.push(controller);
+      var timeout=setTimeout(function(){controller.abort();},10000);
+      try{
+        var response=await fetch(url,{credentials:'omit',signal:controller.signal,cache:'default'});
+        if(!response.ok)throw new Error('Steam logo metadata unavailable');
+        var payload=await response.json();
+        var record=payload&&payload.data&&payload.data[appId];
+        if(!record||!record.common)throw new Error('Steam logo metadata invalid');
+        return record;
+      }finally{clearTimeout(timeout);}
+    }
+    try{
+      try{
+        return await Promise.any([
+          attempt(endpoint),
+          attempt('https://proxy.cors.dev/'+endpoint)
+        ]);
+      }catch(error){
+        return await attempt('https://api.allorigins.win/raw?url='+encodeURIComponent(endpoint));
+      }
+    }finally{
+      controllers.forEach(function(controller){controller.abort();});
+    }
+  }
+  async function findSteamEnglishLogo(appId){
+    var cached=steamLogoCache.get(appId);
+    if(cached&&cached.expires>Date.now())return cached.logo;
+    var record=null;
+    try{record=await fetchSteamLogoRecord(appId);}catch(error){}
+    var candidates=steamLogoCandidates(appId,record);
+    var verified=await Promise.all(candidates.map(function(candidate){
+      return verifySteamLogoImage(candidate.url).then(function(image){
+        return image?Object.assign({},candidate,image):null;
+      });
+    }));
+    verified=verified.filter(Boolean).sort(function(a,b){
+      var languageA=a.lang==='english'?0:1;
+      var languageB=b.lang==='english'?0:1;
+      return languageA-languageB||(b.w*b.h-a.w*a.h)||a.sourceRank-b.sourceRank;
+    });
+    var best=verified[0]||null;
+    steamLogoCache.set(appId,{expires:Date.now()+600000,logo:best});
+    return best;
   }
   function templateRelease(game){
     var release=game.release_date||{};
@@ -1890,6 +2018,8 @@ function bannerPlayer(root,initialConfig,opts){
   function resetTemplate(){
     templateRequest++;
     templateData=null;templateImages=[];templateScreenshot=0;
+    templateAutoLogo='';
+    displayTemplateLogo('','');
     templateDetails.hidden=true;templateCreate.disabled=true;templateFetch.disabled=false;templateFetch.textContent='Fetch game';
     templateMessage('');
   }
@@ -1902,20 +2032,17 @@ function bannerPlayer(root,initialConfig,opts){
   document.getElementById('steam-template-close').addEventListener('click',closeTemplate);
   document.getElementById('template-cancel').addEventListener('click',closeTemplate);
   templateDialog.addEventListener('close',resetTemplate);
-  document.getElementById('template-logo-url').addEventListener('input',function(){
-    if(templateData){
-      var value=this.value.trim();
-      templateMessage(value&&!validSteamImage(value)?'Enter a hosted PNG, JPG, or WebP image URL.':'');
-    }
-  });
   templateForm.addEventListener('submit',async function(event){
     event.preventDefault();
-    var steamURL=document.getElementById('template-steam-url').value.trim();
-    var appId=steamAppId(steamURL);
-    if(!appId){templateMessage('Enter a valid Steam app or widget URL.',true);return;}
+    var steamInput=document.getElementById('template-steam-url').value.trim();
+    var appId=steamAppId(steamInput);
+    if(!appId){templateMessage('Enter a valid Steam game URL or App ID.',true);return;}
     var requestId=++templateRequest;
+    templateAutoLogo='';
+    displayTemplateLogo('','');
+    var logoLookup=findSteamEnglishLogo(appId).catch(function(){return null;});
     templateData=null;templateDetails.hidden=true;templateCreate.disabled=true;
-    templateFetch.disabled=true;templateFetch.textContent='Fetching…';templateMessage('Fetching game details…');
+    templateFetch.disabled=true;templateFetch.textContent='Fetching…';templateMessage('Fetching game details and English logo…');
     try{
       var game=await fetchSteamGame(appId);
       if(requestId!==templateRequest||!templateDialog.open)return;
@@ -1927,8 +2054,16 @@ function bannerPlayer(root,initialConfig,opts){
       document.getElementById('template-game-release').textContent=templateRelease(game);
       document.getElementById('template-bullets').value=steamFeatureCopy(game).join('\n');
       renderTemplateImages();
-      templateDetails.hidden=false;templateCreate.disabled=false;
-      templateMessage('Game details loaded.');
+      templateDetails.hidden=false;templateCreate.disabled=true;
+      templateMessage('Game details loaded. Checking English logo…');
+      var foundLogo=await logoLookup;
+      if(requestId!==templateRequest||!templateDialog.open)return;
+      if(foundLogo){
+        templateAutoLogo=foundLogo.url;
+        displayTemplateLogo(foundLogo.url,'Official English Steam logo · '+foundLogo.w+' × '+foundLogo.h+' px');
+      }
+      templateMessage(foundLogo?'Game details and English Steam logo loaded.':'Game details loaded. No automatic English logo found.');
+      templateCreate.disabled=false;
     }catch(error){
       if(requestId!==templateRequest||!templateDialog.open)return;
       templateMessage('Unable to retrieve Steam details. Check the URL and try again.',true);
@@ -1944,8 +2079,7 @@ function bannerPlayer(root,initialConfig,opts){
   document.getElementById('template-create').addEventListener('click',function(){
     if(!templateData)return;
     var game=templateData.game,appId=templateData.appId;
-    var logoURL=document.getElementById('template-logo-url').value.trim();
-    if(logoURL&&!validSteamImage(logoURL)){templateMessage('Enter a valid hosted logo image URL, or leave it blank.',true);return;}
+    var logoURL=templateAutoLogo;
     if(project.layers.length&&!window.confirm('Replace the current banner with this Steam template?'))return;
     var screenshot=selectedTemplateImage();
     var screenshotURL=screenshot?screenshot.full:validURL(game.header_image)?game.header_image:'';
@@ -1971,7 +2105,7 @@ function bannerPlayer(root,initialConfig,opts){
       stack.steps.push(step);
     });
     if(logoURL){
-      var logo=stepFactory('image');logo.name='Game logo';logo.url=logoURL;logo.alt=String(game.name||'Game')+' logo';logo.imageWidth=84;logo.imageHeight=94;logo.hold=2300;
+      var logo=stepFactory('image');logo.name='Game logo';logo.url=logoURL;logo.alt=String(game.name||'Game')+' logo';logo.imageWidth=100;logo.imageHeight=100;logo.hold=2300;
       stack.steps.push(logo);
     }else{
       var title=stepFactory('text');title.name='Game title';title.text=String(game.name||'Game');title.richHtml='<strong style="font-size:1.1em">'+esc(title.text)+'</strong>';title.hold=2300;
